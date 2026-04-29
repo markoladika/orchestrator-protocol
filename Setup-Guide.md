@@ -36,7 +36,7 @@ After ~60 minutes of setup, you get:
 Paste this into a Claude Code session:
 
 ```
-Read https://raw.githubusercontent.com/markoladika/orchestrator-protocol/main/Setup-Guide.md
+Read https://github.com/markoladika/orchestrator-protocol/blob/main/Setup-Guide.md
 and walk me through every step.
 
 Create a task list with one task per Step (0–7). Execute in order.
