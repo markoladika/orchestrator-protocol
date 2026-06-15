@@ -67,6 +67,10 @@ Run these in sequence. Each step builds on the previous.
 
 > Every step has a **Claude Code prompt** (preferred) and a **manual command** (optional fallback). You can do the entire setup by pasting prompts.
 
+> **Two orchestration variants — this guide builds toward Variant A.**
+> The full setup above (remote server + tmux persistent sessions) is for **Variant A — tmux coordination**: persistent multi-account sessions, autonomous overnight runs, code from any device.
+> If you only want **local parallel building on one machine**, use **Variant B — worktrees + Agent Teams** (`AGENT_ORCHESTRATOR_PROTOCOL.md`). Variant B needs **no tmux and no server** — so you can **skip Steps 4 and 5** — and it sets itself up. Do still do **Step 6 (PM framework)**; it benefits both. Then jump to the Variant B option in Step 7.
+
 ---
 
 # Step 0 — Prerequisite: Install Claude Code
@@ -515,6 +519,10 @@ CLAUDE.md "Testing" section as a diff. Do not run any tests yet.
 
 # Step 7 — Orchestrator (The Payoff)
 
+> **Pick your variant.** Below is **Variant A — tmux coordination** (persistent worker sessions, tmux dispatch). For local parallel building with native auto-mailbox + git-worktree isolation and **no tmux**, use the **Variant B** prompt at the end of this step instead.
+
+## Variant A — tmux coordination
+
 ## What you do
 
 Start a fresh Claude Code session, paste the orchestrator prompt. The orchestrator fetches the protocol from GitHub, saves it locally, then asks what you want to build — plans the slate WITH you, gets your approval, then spawns worker sessions and starts dispatching.
@@ -567,6 +575,31 @@ I want to work on.
 
 ---
 
+## Variant B — worktrees + Agent Teams (no tmux)
+
+## What you do
+
+Start a fresh Claude Code session at the project root and let the protocol install itself. Each agent gets its own git worktree ("desk") for hard file isolation; the lead and agents coordinate via the native Agent Teams auto-mailbox. No tmux, no server.
+
+> Prerequisite: Claude Code v2.1.32+ and Agent Teams enabled (`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`). Step 6 (PM framework) is recommended but optional.
+
+## Prompt (paste in a fresh Claude Code session at the project root)
+
+```
+Read https://raw.githubusercontent.com/markoladika/orchestrator-protocol/main/AGENT_ORCHESTRATOR_PROTOCOL.md
+and set it up for THIS repo by following its "FOR CLAUDE CODE — SETUP" section.
+
+- Confirm this is a git repo and that Agent Teams is enabled (offer to enable it).
+- Explore the repo, then propose a small set of non-overlapping vertical slices
+  (features owned end-to-end) and WAIT for my approval before scaffolding.
+- Scaffold orchestration/ (lead bootstrap, slate, per-agent notebooks, worktree registry).
+- Show me the result and how to start the first slate. Do NOT push to any remote.
+```
+
+> Verify: `orchestration/` exists with `LEAD.md`, `SLATE.md`, `sessions/`, and a worktree registry; the lead can spawn one agent per slice, each in its own `../<repo>-wt/<agent>` desk.
+
+---
+
 # You're Set Up — Now Go Use It
 
 You now have:
@@ -583,6 +616,8 @@ You now have:
 - **All repos:** [github.com/markoladika](https://github.com/markoladika/)
 - **Robo-Talk** (output styles + token reduction): [github.com/markoladika/robo-talk](https://github.com/markoladika/robo-talk)
 - **Orchestrator Protocol** (bootstrap + protocol): [github.com/markoladika/orchestrator-protocol](https://github.com/markoladika/orchestrator-protocol)
+  - Variant A — tmux coordination: `ORCHESTRATOR_BOOTSTRAP.md` + `ORCHESTRATOR_PROTOCOL.md`
+  - Variant B — worktrees + Agent Teams (self-installing, no tmux): `AGENT_ORCHESTRATOR_PROTOCOL.md`
 - **This Setup Guide** (slides): in the orchestrator-protocol repo
 
 ## Let's Connect

@@ -1,6 +1,8 @@
 # Orchestrator Bootstrap
 
 > Slim, drop-in instructions the orchestrator session reads on startup. Full reference: `ORCHESTRATOR_PROTOCOL.md`.
+>
+> **This is Variant A — tmux coordination.** It uses persistent sessions that talk via tmux `send-keys`, with per-session branches on a shared checkout. If you'd rather have native auto-mailbox coordination and git-worktree file isolation (no tmux required), use **Variant B — `AGENT_ORCHESTRATOR_PROTOCOL.md`**, which is self-contained and sets itself up. Both share the same roles and the two rules (one owner per slice; only the lead touches `main`). See the README for a side-by-side comparison.
 
 You are the **orchestrator session** in a multi-session orchestration on this codebase. Your job is to plan WITH the human, define worker sessions, dispatch work, and pin durable knowledge.
 
@@ -74,7 +76,7 @@ Project-specific subagents live in `.claude/agents/*.md`. Inventory varies per c
 
 - `database-engineer` — schema, migrations, RLS
 - `code-reviewer` — independent peer review with confidence-rated findings
-- A testing specialist (`producting-testing-agent`, `testing-engineer`, etc.)
+- A testing specialist (`testing-engineer`, `test-runner`, etc.)
 - A backend / frontend specialist (project-specific names)
 
 Both **workers** and **orchestrator** can invoke subagents via the Task tool:
