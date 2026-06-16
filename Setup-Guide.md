@@ -596,7 +596,7 @@ and set it up for THIS repo by following its "FOR CLAUDE CODE — SETUP" section
 - Show me the result and how to start the first slate. Do NOT push to any remote.
 ```
 
-> Verify: `orchestration/` exists with `LEAD.md`, `SLATE.md`, `sessions/`, and a worktree registry; the lead can spawn one agent per slice, each in its own `../<repo>-wt/<agent>` desk.
+> Verify: `orchestration/` exists with `LEAD.md`, `SLATE.md`, `agents/`, and a worktree registry; the lead can spawn one agent per slice, each in its own `../<repo>-wt/<agent>` desk.
 
 ---
 

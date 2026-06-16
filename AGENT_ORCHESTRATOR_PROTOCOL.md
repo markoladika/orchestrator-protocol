@@ -11,7 +11,7 @@
 - **Tech lead** = the foreman. Works on `main`. Plans with you, assigns work, reviews, merges. Does small/fast fixes inline; delegates anything bigger.
 - **Agent** = a product builder. Owns one **vertical slice** (a whole feature end-to-end: backend + frontend + tests), not a tech layer.
 - **Desk** = a **git worktree** — each agent's own private folder so their files/builds never collide.
-- **Notebook** = each agent's coordination files (`orchestration/sessions/<agent>/`) — **shared**, on `main`, so everyone can read them.
+- **Notebook** = each agent's coordination files (`orchestration/agents/<agent>/`) — **shared**, on `main`, so everyone can read them.
 - **Mailbox** = automatic messaging between lead and agents (Claude Code **Agent Teams**). No polling, no copy-paste.
 - **Git flow** = agent commits on its own branch → lead reviews → **cherry-picks** the approved commit onto `main` → removes the desk.
 
@@ -41,7 +41,7 @@ Each agent owns a **feature**, not a **layer**. The billing agent owns billing's
 
 An agent has two homes, and they live in different places on purpose:
 
-- **Notebook** — small text files (identity, knowledge, status, backlog). **Shared, one copy, on `main`** so the lead and other agents can read it. → `orchestration/sessions/<agent>/`
+- **Notebook** — small text files (identity, knowledge, status, backlog). **Shared, one copy, on `main`** so the lead and other agents can read it. → `orchestration/agents/<agent>/`
 - **Desk** — a full code checkout (where the agent actually edits code). **Private, isolated, one per agent.** → a git worktree beside the repo.
 
 > A branch is just a label in history. A working tree is the actual files in a folder. **One folder can only have one branch checked out at a time** — so multiple agents sharing one folder clobber each other. A **worktree** gives each agent its own folder with its own branch checked out *simultaneously*, all sharing the same `.git` history. That's why worktrees, not bare branches, are the unit of isolation.
@@ -77,7 +77,7 @@ Use Claude Code **Agent Teams** (experimental; enable with `CLAUDE_CODE_EXPERIME
     PROTOCOL.md                  ← this file (or a pointer to it)
     LEAD.md                      ← the lead's bootstrap (generated at setup)
     SLATE.md                     ← current plan: which slices are active, who owns what
-    sessions/
+    agents/
       _template/                 ← notebook template copied per agent
       <agent-a>/                 ← agent A's notebook (shared, on main)
       <agent-b>/                 ← agent B's notebook
@@ -88,7 +88,7 @@ Use Claude Code **Agent Teams** (experimental; enable with `CLAUDE_CODE_EXPERIME
   <agent-b>/                     ← agent B's private code checkout, its own branch
 ```
 
-- **Notebook** → `<repo>/orchestration/sessions/<agent>/` (shared, on `main`)
+- **Notebook** → `<repo>/orchestration/agents/<agent>/` (shared, on `main`)
 - **Desk** → `<repo>-wt/<agent>/` (private, isolated, disposable)
 
 > Run this once **per repo** — there's no global install. Each repo you want agents on gets its own `<repo>/orchestration/` and its own sibling `<repo>-wt/`. Nothing lives at the parent (`dev/`) level.
@@ -113,14 +113,14 @@ Use Claude Code **Agent Teams** (experimental; enable with `CLAUDE_CODE_EXPERIME
 
 ### Step 2 — Scaffold the coordination layer (on `main`)
 Create, if absent:
-- `orchestration/` with `LEAD.md`, `SLATE.md`, `worktrees.md`, and `sessions/_template/`.
+- `orchestration/` with `LEAD.md`, `SLATE.md`, `worktrees.md`, and `agents/_template/`.
 - Copy this file to `orchestration/PROTOCOL.md` (or leave a one-line pointer to its source URL).
 - Fill `SLATE.md` with the approved slices: agent name, scope, owned roots, status.
 - Generate `LEAD.md` from the **[Lead bootstrap template](#lead-bootstrap-template)**, substituting the real repo path and slice list.
-- Populate `sessions/_template/` from the **[Notebook template](#notebook-template-lean)**.
+- Populate `agents/_template/` from the **[Notebook template](#notebook-template-lean)**.
 
 ### Step 3 — Create each agent's notebook (shared)
-For each approved slice, copy `sessions/_template/` → `sessions/<agent>/` and fill in: role, owned file/dir roots, where-to-learn-your-domain pointers (real entry points in this repo). Keep it **lean** — a router to the code, not a re-statement of it.
+For each approved slice, copy `agents/_template/` → `agents/<agent>/` and fill in: role, owned file/dir roots, where-to-learn-your-domain pointers (real entry points in this repo). Keep it **lean** — a router to the code, not a re-statement of it.
 
 ### Step 4 — Install the persistence hooks + verify script
 Write both scripts from **[Persistence hooks](#persistence-hooks)** to `orchestration/hooks/` (`chmod +x` them), and **merge** the hook block into `.claude/settings.json` — merge, never overwrite; preserve any existing `hooks`/settings (use `jq`/`python3`). Also write **[verify.sh](#verify-script)** to `orchestration/` (`chmod +x`). The hooks make the harness enforce notebook flushing before any agent rests or compacts. They require `jq`.
@@ -152,7 +152,7 @@ Run `bash orchestration/verify.sh` and show its output (expect all `ok`). Then p
 1. **Plan with the human.** Lead proposes the slate (scope, slices, agents). Human approves.
 2. **Spawn the team** (in-process). Lead spawns one agent per active slice, each with the spawn prompt.
 3. **Each agent gets a desk.** `git worktree add <repo>-wt/<agent> -b <agent>/<task>`.
-4. **Agents build** their slice end-to-end on their own branch; they read/write their **notebook** in the shared `orchestration/sessions/<agent>/`.
+4. **Agents build** their slice end-to-end on their own branch; they read/write their **notebook** in the shared `orchestration/agents/<agent>/`.
 5. **Agents report** via mailbox when done (or blocked).
 6. **Lead reviews** the diff. If good → `git cherry-pick <sha>` onto `main`. If not → send feedback via mailbox.
 7. **Lead removes the desk** and assigns the next slice.
@@ -169,7 +169,7 @@ Agent Teams teammates are **transient**: when the lead session ends (or the team
 ### Three lifespans — know what survives
 - **Live agent (conversation)** — dies with the lead. Transient.
 - **Team/task state** (`~/.claude/teams`, `~/.claude/tasks`) — removed when the session ends. Transient.
-- **Notebooks** (`orchestration/sessions/<agent>/`) — plain files in the repo. **Permanent.** Created once at setup; never recreated.
+- **Notebooks** (`orchestration/agents/<agent>/`) — plain files in the repo. **Permanent.** Created once at setup; never recreated.
 
 You never lose the *work state* — only whatever was in conversation but not yet written to a notebook. This layer's whole job is to shrink that gap to near-zero.
 
@@ -190,26 +190,26 @@ When context fills, **flush before compacting**: every agent writes its durables
 ### Restart loop — respawn, never recreate
 ```
 lead dies → teammates die → team/task state gone, NOTEBOOKS intact on disk
-→ relaunch lead → it reads SLATE.md + sessions/*/STATUS.md to see who existed and where each was
+→ relaunch lead → it reads SLATE.md + agents/*/STATUS.md to see who existed and where each was
 → respawn a teammate (agentType = its slice) → it reads its notebook → continues
 ```
 You recreate the *agent* (a cheap respawn), never the *files*.
 
-> **Spawn convention that makes the hooks work:** spawn each teammate with **`agentType` = its slice name** (matching its `sessions/<slice>/` folder). The hooks read `agent_type` to find the right notebook — and resolve the shared notebook from inside the agent's worktree via `git rev-parse --git-common-dir`, so it always writes to the main checkout, not the worktree copy.
+> **Spawn convention that makes the hooks work:** spawn each teammate with **`agentType` = its slice name** (matching its `agents/<slice>/` folder). The hooks read `agent_type` to find the right notebook — and resolve the shared notebook from inside the agent's worktree via `git rev-parse --git-common-dir`, so it always writes to the main checkout, not the worktree copy.
 
 ---
 
 ## Templates
 
 ### Notebook template (lean, separate files)
-A notebook is a small set of files in `orchestration/sessions/_template/`, copied per agent. Separate files (not one blob) so the hooks can key off `STATUS.md` and append to `MEMORY.md`, and so each survives compaction independently. Keep them lean.
+A notebook is a small set of files in `orchestration/agents/_template/`, copied per agent. Separate files (not one blob) so the hooks can key off `STATUS.md` and append to `MEMORY.md`, and so each survives compaction independently. Keep them lean.
 
 `KNOWLEDGE.md` (identity + where to learn — written once, updated rarely):
 ```markdown
 # <agent> — KNOWLEDGE
 **Slice (owns end-to-end):** <feature>
 **Owned roots:** <dir/file roots — the ONLY files this agent edits>
-**Desk:** ../<repo>-wt/<agent>   ·   **Notebook:** <repo>/orchestration/sessions/<agent>/
+**Desk:** ../<repo>-wt/<agent>   ·   **Notebook:** <repo>/orchestration/agents/<agent>/
 ## Where to learn my domain
 - <entry-point files / docs / tests in THIS repo>
 ```
@@ -255,7 +255,7 @@ You are the tech lead for <repo>. You work on `main` in <repo>.
 - On done: review diff → git cherry-pick <sha> → git worktree remove <repo>-wt/<agent>.
 
 ## Discover agents & restart (teammates are transient)
-- To see which agents exist + what they own: read SLATE.md and sessions/*/STATUS.md.
+- To see which agents exist + what they own: read SLATE.md and agents/*/STATUS.md.
 - Teammates do NOT survive a session end and /resume does not restore them.
   To restart one: respawn it (agentType = its slice) — it reads its own notebook
   (STATUS → MEMORY tail) and continues. Never recreate notebooks; they persist on disk.
@@ -275,7 +275,7 @@ You are a builder agent on <repo>. You own ONE vertical slice end-to-end.
 SLICE: <feature — what you own, backend + frontend + tests>
 OWNED ROOTS: <the ONLY file/dir roots you may edit>
 YOUR DESK (edit code here): <repo>-wt/<agent>/   ← your own worktree, your own branch
-YOUR NOTEBOOK (read/write coordination here): <repo>/orchestration/sessions/<agent>/
+YOUR NOTEBOOK (read/write coordination here): <repo>/orchestration/agents/<agent>/
    ← always the MAIN checkout copy, NOT the copy inside your desk
 
 RULES (binding):
@@ -325,7 +325,7 @@ AGENT=$(printf '%s' "$INPUT" | jq -r '.agent_type // .agent_id // "lead"' 2>/dev
 CWD=$(printf '%s' "$INPUT" | jq -r '.cwd // "."' 2>/dev/null)
 COMMON=$(git -C "$CWD" rev-parse --git-common-dir 2>/dev/null) || exit 0
 MAIN=$(cd "$CWD" && cd "$(dirname "$COMMON")" && pwd)
-NB="$MAIN/orchestration/sessions/$AGENT/STATUS.md"
+NB="$MAIN/orchestration/agents/$AGENT/STATUS.md"
 [ -f "$NB" ] || exit 0
 FLAG="/tmp/robo-nbguard-$AGENT"
 # Fresh notebook (written in last 2 min) -> agent flushed -> allow rest.
@@ -348,7 +348,7 @@ AGENT=$(printf '%s' "$INPUT" | jq -r '.agent_type // .agent_id // "lead"' 2>/dev
 CWD=$(printf '%s' "$INPUT" | jq -r '.cwd // "."' 2>/dev/null)
 COMMON=$(git -C "$CWD" rev-parse --git-common-dir 2>/dev/null) || exit 0
 MAIN=$(cd "$CWD" && cd "$(dirname "$COMMON")" && pwd)
-DIR="$MAIN/orchestration/sessions/$AGENT"
+DIR="$MAIN/orchestration/agents/$AGENT"
 [ -d "$DIR" ] || exit 0
 TS=$(date '+%Y-%m-%d %H:%M:%S')
 HEAD=$(git -C "$CWD" log --oneline -1 2>/dev/null)
@@ -376,10 +376,10 @@ So any session — especially the lead — knows which agents exist and where th
 
 This repo uses the Agent Orchestrator Protocol (`orchestration/PROTOCOL.md`). When asked to run agents / a team:
 - **Roster + slices (who exists, what they own):** `orchestration/SLATE.md`
-- **Each agent's notebook (identity, status, knowledge):** `orchestration/sessions/<agent>/`
+- **Each agent's notebook (identity, status, knowledge):** `orchestration/agents/<agent>/`
 - **Lead bootstrap:** `orchestration/LEAD.md` · **Desks (worktrees):** `../<repo>-wt/<agent>/`
 
-As lead: read `SLATE.md` to see which agents exist and what each owns, and read `sessions/<agent>/STATUS.md` before assigning or respawning. Spawn each teammate with **agentType = its slice name** (so the notebook hooks resolve). On restart, respawn from the notebooks — never recreate them.
+As lead: read `SLATE.md` to see which agents exist and what each owns, and read `agents/<agent>/STATUS.md` before assigning or respawning. Spawn each teammate with **agentType = its slice name** (so the notebook hooks resolve). On restart, respawn from the notebooks — never recreate them.
 ```
 
 ### Verify script
@@ -392,8 +392,8 @@ p=0; f=0
 ck(){ if eval "$2"; then echo "  ok    $1"; p=$((p+1)); else echo "  FAIL  $1"; f=$((f+1)); fi; }
 ck "orchestration/ exists"             '[ -d orchestration ]'
 ck "SLATE.md + LEAD.md present"        '[ -f orchestration/SLATE.md ] && [ -f orchestration/LEAD.md ]'
-ck "at least one agent notebook"       '[ -n "$(ls -d orchestration/sessions/*/ 2>/dev/null | grep -v _template)" ]'
-ck "every agent has STATUS.md"         '! ls -d orchestration/sessions/*/ 2>/dev/null | grep -v _template | while read -r d; do [ -f "$d/STATUS.md" ] || echo x; done | grep -q x'
+ck "at least one agent notebook"       '[ -n "$(ls -d orchestration/agents/*/ 2>/dev/null | grep -v _template)" ]'
+ck "every agent has STATUS.md"         '! ls -d orchestration/agents/*/ 2>/dev/null | grep -v _template | while read -r d; do [ -f "$d/STATUS.md" ] || echo x; done | grep -q x'
 ck "hooks present + executable"        '[ -x orchestration/hooks/notebook-guard.sh ] && [ -x orchestration/hooks/notebook-snapshot.sh ]'
 ck "settings.json is valid JSON"       '[ ! -f .claude/settings.json ] || python3 -c "import json;json.load(open(\".claude/settings.json\"))" 2>/dev/null'
 ck "hooks wired in settings.json"      'grep -q notebook-guard .claude/settings.json 2>/dev/null'
@@ -406,6 +406,7 @@ These are **not** part of the core setup. Reach for them only when you need them
 
 - **Split-panes / tmux view.** Want each agent in its own visible pane instead of one shared terminal? Switch the Agent Teams display mode to split-panes (uses tmux or iTerm2). **Same team, same automatic mailbox** — purely a viewing change. The structure (lead/agents, desks, notebooks, git flow) is identical, so you can move between in-process and split-panes at any time with no rework.
 - **Persistent sessions vs transient teams.** Agent Teams is transient: one team at a time, cleaned up when done (no nested teams, no resume). The notebooks are the durable layer that makes this survivable — see **[Part 4](#part-4--persistence-restart--protecting-notebooks)** for the full persistence/restart/hooks design.
+- **Pairs with `claude-code-sessions` (optional, independent).** That CLI kit manages *sessions* = Claude Code **conversations** (`claude <name>` to name/resume a chat, `claude ls`/`rm`). This protocol manages **agents** = a session **+** a durable notebook **+** a worktree desk. They share no files — the kit touches `~/.claude/projects/`, this touches `<repo>/orchestration/agents/` — so use either alone, or both together. Using both: name the conversation the same as the agent slice (`claude billing`), and the resumable chat (the kit's job) lines up with the durable `orchestration/agents/billing/` notebook (this protocol's job) into one persistent agent.
 - **Subagents for sub-tasks.** Inside a single agent, use Claude Code subagents (the Task tool) for focused sub-jobs (research, review). They report back only to that agent. Don't nest teams.
 - **Going bigger.** If you ever scale past a handful of active agents, keep the inactive ones parked (notebooks retained) rather than deleted, and watch token cost — multi-agent runs cost roughly linearly per active agent.
 
