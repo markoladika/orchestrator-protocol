@@ -122,8 +122,8 @@ Create, if absent:
 ### Step 3 — Create each agent's notebook (shared)
 For each approved slice, copy `sessions/_template/` → `sessions/<agent>/` and fill in: role, owned file/dir roots, where-to-learn-your-domain pointers (real entry points in this repo). Keep it **lean** — a router to the code, not a re-statement of it.
 
-### Step 4 — Install the persistence hooks
-Write both scripts from **[Persistence hooks](#persistence-hooks)** to `orchestration/hooks/` (`chmod +x` them), and merge the hook block into `.claude/settings.json` (`Stop` + `TeammateIdle` → guard; `PreCompact` + `SessionEnd` → snapshot). These make the harness enforce notebook flushing before any agent rests or compacts. Note they require `jq`.
+### Step 4 — Install the persistence hooks + verify script
+Write both scripts from **[Persistence hooks](#persistence-hooks)** to `orchestration/hooks/` (`chmod +x` them), and **merge** the hook block into `.claude/settings.json` — merge, never overwrite; preserve any existing `hooks`/settings (use `jq`/`python3`). Also write **[verify.sh](#verify-script)** to `orchestration/` (`chmod +x`). The hooks make the harness enforce notebook flushing before any agent rests or compacts. They require `jq`.
 
 ### Step 5 — Register agents for the lead (project CLAUDE.md)
 Append the **[Project CLAUDE.md registry](#project-claudemd-registry-lead-discovery)** block to the repo's root `CLAUDE.md` (create it if absent), substituting the real `<repo>`. This is how the lead discovers which agents exist, where their notebooks are, and the `agentType = slice name` spawn convention.
@@ -143,7 +143,7 @@ Add `<repo>-wt/` to `.gitignore` if it would ever land inside the repo path (it 
 3. Hand control back: the human (with the lead) plans the first slate and spawns the team.
 
 ### Step 8 — Confirm
-Print a short summary: what was created (incl. hooks + CLAUDE.md registry), the active slices, how to start a slate, and how to flip to split-panes later. Do **not** push to any remote unless explicitly asked.
+Run `bash orchestration/verify.sh` and show its output (expect all `ok`). Then print a short summary: what was created (incl. hooks, verify.sh, CLAUDE.md registry), the active slices, how to start a slate, and how to flip to split-panes later. Do **not** push to any remote unless explicitly asked.
 
 ---
 
@@ -180,12 +180,12 @@ Agents update notebooks **continuously**, not at the end: `STATUS.md` on every t
 Two hooks make the harness — not goodwill — protect the notebooks. Setup writes them to `orchestration/hooks/` and wires them in `.claude/settings.json` (scripts in [Templates](#persistence-hooks)).
 
 - **`notebook-guard.sh`** on **`Stop`** + **`TeammateIdle`**: before an agent rests, if its `STATUS.md` was not written recently it **blocks once (exit 2)** with "flush your notebook first," then lets it rest. No agent goes idle on stale state. One nudge only — never an infinite loop.
-- **`notebook-snapshot.sh`** on **`PreCompact`** + **`SessionEnd`**: deterministically appends a mechanical snapshot (timestamp, git HEAD, dirty-file count) to the agent's `MEMORY.md` — survives compaction and graceful exit even if the model wrote nothing.
+- **`notebook-snapshot.sh`** on **`PreCompact`** + **`SessionEnd`**: overwrites a single `LAST_SNAPSHOT.md` with the latest mechanical state (timestamp, git HEAD, dirty-file count) — survives compaction and graceful exit even if the model wrote nothing. Latest-only, so it never grows; `MEMORY.md` stays human-curated.
 
 > A hard `kill -9` / power loss runs **no** hook — nothing can protect that. The `Stop`/`TeammateIdle` hooks firing every turn are the real safety net: notebooks stay at most one turn stale.
 
 ### Compaction ritual — flush, then compact/kill
-When context fills, **flush before compacting**: every agent writes its durables (STATUS / MEMORY / DECISIONS / KNOWLEDGE), *then* `/compact` runs; the `PreCompact` hook snapshots as a backstop. Two-tier truth: the compaction summary is lossy working residue, the notebook is durable truth. After compaction (or a cold start) an agent reads its notebook (STATUS → MEMORY tail) and resumes.
+When context fills, **flush before compacting**: every agent writes its durables (STATUS / MEMORY / DECISIONS / KNOWLEDGE), *then* `/compact` runs; the `PreCompact` hook writes `LAST_SNAPSHOT.md` as a backstop. Two-tier truth: the compaction summary is lossy working residue, the notebook is durable truth. After compaction (or a cold start) an agent reads its notebook (STATUS → LAST_SNAPSHOT → MEMORY tail) and resumes.
 
 ### Restart loop — respawn, never recreate
 ```
@@ -219,7 +219,7 @@ A notebook is a small set of files in `orchestration/sessions/_template/`, copie
 - task: <current task> · state: active|blocked|done · branch: <agent>/<task> · commit: <sha>
 - next: <next intended action>
 ```
-`MEMORY.md` (append-only learnings + auto-snapshots from the PreCompact/SessionEnd hook):
+`MEMORY.md` (append-only human learnings; the hook's mechanical state lives separately in the auto-managed `LAST_SNAPSHOT.md`, so MEMORY never bloats):
 ```markdown
 # <agent> — MEMORY
 ```
@@ -340,8 +340,9 @@ exit 2
 `orchestration/hooks/notebook-snapshot.sh` (deterministic backstop snapshot):
 ```bash
 #!/usr/bin/env bash
-# Wired to PreCompact + SessionEnd. Appends a mechanical snapshot to MEMORY.md
-# so durable truth survives compaction/exit even if the model wrote nothing.
+# Wired to PreCompact + SessionEnd. OVERWRITES a single LAST_SNAPSHOT.md with the
+# latest mechanical state so durable truth survives compaction/exit even if the
+# model wrote nothing. Latest-only -> the file never grows (no unbounded append).
 INPUT=$(cat)
 AGENT=$(printf '%s' "$INPUT" | jq -r '.agent_type // .agent_id // "lead"' 2>/dev/null)
 CWD=$(printf '%s' "$INPUT" | jq -r '.cwd // "."' 2>/dev/null)
@@ -352,7 +353,7 @@ DIR="$MAIN/orchestration/sessions/$AGENT"
 TS=$(date '+%Y-%m-%d %H:%M:%S')
 HEAD=$(git -C "$CWD" log --oneline -1 2>/dev/null)
 DIRTY=$(git -C "$CWD" status --porcelain 2>/dev/null | wc -l | tr -d ' ')
-{ echo ""; echo "## $TS [auto-snapshot]"; echo "- commit: ${HEAD:-none}"; echo "- uncommitted: $DIRTY"; } >> "$DIR/MEMORY.md"
+{ echo "# $AGENT — LAST_SNAPSHOT (auto; do not hand-edit)"; echo "- at: $TS"; echo "- commit: ${HEAD:-none}"; echo "- uncommitted: $DIRTY"; } > "$DIR/LAST_SNAPSHOT.md"
 exit 0
 ```
 
@@ -379,6 +380,26 @@ This repo uses the Agent Orchestrator Protocol (`orchestration/PROTOCOL.md`). Wh
 - **Lead bootstrap:** `orchestration/LEAD.md` · **Desks (worktrees):** `../<repo>-wt/<agent>/`
 
 As lead: read `SLATE.md` to see which agents exist and what each owns, and read `sessions/<agent>/STATUS.md` before assigning or respawning. Spawn each teammate with **agentType = its slice name** (so the notebook hooks resolve). On restart, respawn from the notebooks — never recreate them.
+```
+
+### Verify script
+Setup writes this to `orchestration/verify.sh` (`chmod +x`). Run it from the repo root any time to confirm the scaffold + hooks are intact; exits non-zero if anything is missing.
+```bash
+#!/usr/bin/env bash
+# Verify the Agent Orchestrator scaffold in this repo. Run from anywhere in the repo.
+cd "$(git rev-parse --show-toplevel 2>/dev/null)" || { echo "not a git repo"; exit 1; }
+p=0; f=0
+ck(){ if eval "$2"; then echo "  ok    $1"; p=$((p+1)); else echo "  FAIL  $1"; f=$((f+1)); fi; }
+ck "orchestration/ exists"             '[ -d orchestration ]'
+ck "SLATE.md + LEAD.md present"        '[ -f orchestration/SLATE.md ] && [ -f orchestration/LEAD.md ]'
+ck "at least one agent notebook"       '[ -n "$(ls -d orchestration/sessions/*/ 2>/dev/null | grep -v _template)" ]'
+ck "every agent has STATUS.md"         '! ls -d orchestration/sessions/*/ 2>/dev/null | grep -v _template | while read -r d; do [ -f "$d/STATUS.md" ] || echo x; done | grep -q x'
+ck "hooks present + executable"        '[ -x orchestration/hooks/notebook-guard.sh ] && [ -x orchestration/hooks/notebook-snapshot.sh ]'
+ck "settings.json is valid JSON"       '[ ! -f .claude/settings.json ] || python3 -c "import json;json.load(open(\".claude/settings.json\"))" 2>/dev/null'
+ck "hooks wired in settings.json"      'grep -q notebook-guard .claude/settings.json 2>/dev/null'
+ck "CLAUDE.md registry present"        'grep -qi "Agent Orchestrator" CLAUDE.md 2>/dev/null'
+echo "  -> $p ok, $f failed"
+[ "$f" -eq 0 ]
 ```
 
 These are **not** part of the core setup. Reach for them only when you need them.
