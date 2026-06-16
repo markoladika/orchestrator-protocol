@@ -44,6 +44,7 @@ In a single day testing this protocol on a production codebase:
 
 **Variant B — worktrees + Agent Teams**
 - **`AGENT_ORCHESTRATOR_PROTOCOL.md`** — Self-contained spec **and** installer. Hand it to Claude Code in any repo and say "set this up" — it scaffolds the structure for you. No tmux required.
+- **`enable.sh`** — optional: registers the protocol in `~/.claude/CLAUDE.md` so any session can scaffold it into the current repo on request (see Getting started).
 
 **Shared**
 - **`Setup-Guide.md`** — From zero to orchestrating in ~60 minutes (statusline, multi-account, remote server, PM framework, orchestrator). Mostly Variant A; Variant B reuses the PM-framework steps and skips the tmux/server steps.
@@ -57,6 +58,8 @@ Read https://github.com/markoladika/orchestrator-protocol/blob/main/AGENT_ORCHES
 and set it up for this repo. Follow its "FOR CLAUDE CODE — SETUP" section.
 ```
 You need: [Claude Code](https://docs.claude.com/en/docs/claude-code) (v2.1.32+), a git repo, and Agent Teams enabled (`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`).
+
+**Enable it everywhere (optional):** clone this repo, then run `bash enable.sh`. It adds a short pointer to `~/.claude/CLAUDE.md` so **any** Claude Code session can scaffold the protocol into the *current* git repo on request (just say "orchestrate this repo" / "set up a team"). The pointer references this clone's protocol file — `git pull` here updates the behaviour everywhere; nothing is duplicated. Orchestration stays **per-repo** (`<repo>/orchestration/agents/`); it never scaffolds into a non-repo or a container dir.
 
 **Variant A (persistent sessions, tmux):**
 1. Read `ORCHESTRATOR_BOOTSTRAP.md` for the core concepts (5 min read)
