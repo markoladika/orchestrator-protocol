@@ -123,7 +123,7 @@ Create, if absent:
 For each approved slice, copy `agents/_template/` → `agents/<agent>/` and fill in: role, owned file/dir roots, where-to-learn-your-domain pointers (real entry points in this repo). Keep it **lean** — a router to the code, not a re-statement of it.
 
 ### Step 4 — Install the persistence hooks + verify script
-Write both scripts from **[Persistence hooks](#persistence-hooks)** to `orchestration/hooks/` (`chmod +x` them), and **merge** the hook block into `.claude/settings.json` — merge, never overwrite; preserve any existing `hooks`/settings (use `jq`/`python3`). Also write **[verify.sh](#verify-script)** to `orchestration/` (`chmod +x`). The hooks make the harness enforce notebook flushing before any agent rests or compacts. They require `jq`.
+Write both scripts from **[Persistence hooks](#persistence-hooks)** to `orchestration/hooks/` (`chmod +x` them), and **merge** the hook block into `.claude/settings.json` — merge, never overwrite; preserve any existing `hooks`/settings (use `jq`/`python3`). Also write **[verify.sh](#verify-script)** and **[agent-bind.sh](#agent-bind-integration-with-claude-code-sessions-optional)** to `orchestration/` (`chmod +x`). The hooks make the harness enforce notebook flushing before any agent rests or compacts (they require `jq`); `agent-bind.sh` is the optional bridge the `claude-code-sessions` CLI wrapper calls if present.
 
 ### Step 5 — Register agents for the lead (project CLAUDE.md)
 Append the **[Project CLAUDE.md registry](#project-claudemd-registry-lead-discovery)** block to the repo's root `CLAUDE.md` (create it if absent), substituting the real `<repo>`. This is how the lead discovers which agents exist, where their notebooks are, and the `agentType = slice name` spawn convention.
@@ -313,7 +313,7 @@ git worktree prune
 ```
 
 ### Persistence hooks
-Setup writes these two scripts to `orchestration/hooks/` (chmod +x) and wires them in `.claude/settings.json`. They need `jq`. Both resolve the *shared* notebook from inside a worktree via `git rev-parse --git-common-dir`, and key off `agent_type` — so teammates must be spawned with `agentType` = their slice name.
+Setup writes these two scripts to `orchestration/hooks/` (chmod +x) and wires them in `.claude/settings.json`. They need `jq`. Both resolve the *shared* notebook from inside a worktree via `git rev-parse --git-common-dir`. They identify the agent from `agent_type` (Agent Teams) **or**, for a solo `claude <name>` session, from the `customTitle` in the session's own transcript — so both teammates and solo agent sessions are protected, with no env var.
 
 `orchestration/hooks/notebook-guard.sh` (blocks rest until the notebook is flushed):
 ```bash
@@ -321,7 +321,14 @@ Setup writes these two scripts to `orchestration/hooks/` (chmod +x) and wires th
 # Wired to Stop + TeammateIdle. Blocks once (exit 2) if STATUS.md is stale,
 # nudging the agent to flush; never loops. Requires jq.
 INPUT=$(cat)
-AGENT=$(printf '%s' "$INPUT" | jq -r '.agent_type // .agent_id // "lead"' 2>/dev/null)
+# Identify the agent: Agent Teams sets agent_type; a solo `claude <name>` session
+# carries its name as customTitle in its own transcript (no env var needed).
+AGENT=$(printf '%s' "$INPUT" | jq -r '.agent_type // empty' 2>/dev/null)
+if [ -z "$AGENT" ]; then
+  TP=$(printf '%s' "$INPUT" | jq -r '.transcript_path // empty' 2>/dev/null)
+  [ -f "$TP" ] && AGENT=$(grep '"customTitle"' "$TP" 2>/dev/null | tail -1 | sed -n 's/.*"customTitle":"\([^"]*\)".*/\1/p')
+fi
+[ -n "$AGENT" ] || exit 0
 CWD=$(printf '%s' "$INPUT" | jq -r '.cwd // "."' 2>/dev/null)
 COMMON=$(git -C "$CWD" rev-parse --git-common-dir 2>/dev/null) || exit 0
 MAIN=$(cd "$CWD" && cd "$(dirname "$COMMON")" && pwd)
@@ -344,7 +351,13 @@ exit 2
 # latest mechanical state so durable truth survives compaction/exit even if the
 # model wrote nothing. Latest-only -> the file never grows (no unbounded append).
 INPUT=$(cat)
-AGENT=$(printf '%s' "$INPUT" | jq -r '.agent_type // .agent_id // "lead"' 2>/dev/null)
+# agent_type for Agent Teams; else the solo session's customTitle from its transcript.
+AGENT=$(printf '%s' "$INPUT" | jq -r '.agent_type // empty' 2>/dev/null)
+if [ -z "$AGENT" ]; then
+  TP=$(printf '%s' "$INPUT" | jq -r '.transcript_path // empty' 2>/dev/null)
+  [ -f "$TP" ] && AGENT=$(grep '"customTitle"' "$TP" 2>/dev/null | tail -1 | sed -n 's/.*"customTitle":"\([^"]*\)".*/\1/p')
+fi
+[ -n "$AGENT" ] || exit 0
 CWD=$(printf '%s' "$INPUT" | jq -r '.cwd // "."' 2>/dev/null)
 COMMON=$(git -C "$CWD" rev-parse --git-common-dir 2>/dev/null) || exit 0
 MAIN=$(cd "$CWD" && cd "$(dirname "$COMMON")" && pwd)
@@ -367,6 +380,31 @@ exit 0
     "SessionEnd":   [{ "hooks": [{ "type": "command", "command": "$CLAUDE_PROJECT_DIR/orchestration/hooks/notebook-snapshot.sh" }] }]
   }
 }
+```
+
+### Agent bind (integration with `claude-code-sessions`, optional)
+Setup writes this to `orchestration/agent-bind.sh` (`chmod +x`). It's the **bridge** the `claude-code-sessions` CLI wrapper calls *only if it exists* in the repo — so the two tools stay decoupled and re-couple only when orchestration is present. Given an agent name it: binds an **existing** agent (prints a system-prompt that points the session at its notebook), or for a **new** name asks once on the tty before creating the notebook from `_template`. Prompts go to the tty; only the bind text goes to stdout (so the wrapper can pass it via `--append-system-prompt`).
+```bash
+#!/usr/bin/env bash
+# orchestration/agent-bind.sh <name>  -> prints system-prompt binding text on stdout (empty if none).
+# Existing agent: bind. New name in an orchestration repo: confirm on tty, create from _template, bind.
+name="$1"; [ -n "$name" ] || exit 0
+root=$(git -C "$(pwd)" rev-parse --show-toplevel 2>/dev/null) || exit 0
+AG="$root/orchestration/agents/$name"
+if [ ! -d "$AG" ]; then
+  tmpl="$root/orchestration/agents/_template"; [ -d "$tmpl" ] || exit 0
+  [ -e /dev/tty ] || exit 0                                  # non-interactive: never auto-create
+  printf "Agent '%s' has no notebook here. Create orchestration/agents/%s/ ? [y/N] " "$name" "$name" > /dev/tty
+  read ans < /dev/tty
+  case "$ans" in y|Y|yes|YES) ;; *) exit 0 ;; esac
+  cp -R "$tmpl" "$AG"
+  for f in "$AG"/*; do sed -i.bak "s/<agent>/$name/g" "$f" 2>/dev/null && rm -f "$f.bak"; done
+fi
+cat <<EOF
+You are the "$name" agent for this repo. Before anything else, read your durable notebook:
+orchestration/agents/$name/KNOWLEDGE.md, STATUS.md, MEMORY.md, LAST_SNAPSHOT.md — then continue from
+STATUS. Update STATUS/MEMORY/DECISIONS as you work (a hook enforces a flush before you go idle).
+EOF
 ```
 
 ### Project CLAUDE.md registry (lead discovery)
