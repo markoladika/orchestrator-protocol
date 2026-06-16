@@ -123,7 +123,7 @@ Create, if absent:
 For each approved slice, copy `agents/_template/` → `agents/<agent>/` and fill in: role, owned file/dir roots, where-to-learn-your-domain pointers (real entry points in this repo). Keep it **lean** — a router to the code, not a re-statement of it.
 
 ### Step 4 — Install the persistence hooks + verify script
-Write both scripts from **[Persistence hooks](#persistence-hooks)** to `orchestration/hooks/` (`chmod +x` them), and **merge** the hook block into `.claude/settings.json` — merge, never overwrite; preserve any existing `hooks`/settings (use `jq`/`python3`). Also write **[verify.sh](#verify-script)** and **[agent-bind.sh](#agent-bind-integration-with-claude-code-sessions-optional)** to `orchestration/` (`chmod +x`). The hooks make the harness enforce notebook flushing before any agent rests or compacts (they require `jq`); `agent-bind.sh` is the optional bridge the `claude-code-sessions` CLI wrapper calls if present.
+Write both scripts from **[Persistence hooks](#persistence-hooks)** to `orchestration/hooks/` (`chmod +x` them), and **merge** the hook block into `.claude/settings.json` — merge, never overwrite; preserve any existing `hooks`/settings (use `jq`/`python3`). Also write **[verify.sh](#verify-script)** and **[agent-bind.sh](#agent-bind-integration-with-claude-code-sessions-optional)** to `orchestration/` (`chmod +x`), and the **[`/session-compact` command](#compaction-command-session-compact)** to `.claude/commands/session-compact.md`. The hooks make the harness enforce notebook flushing before any agent rests or compacts (they require `jq`); `agent-bind.sh` is the optional bridge the `claude-code-sessions` CLI wrapper calls if present; `/session-compact` lets an agent flush + trim its notebook on demand before you compact.
 
 ### Step 5 — Register agents for the lead (project CLAUDE.md)
 Append the **[Project CLAUDE.md registry](#project-claudemd-registry-lead-discovery)** block to the repo's root `CLAUDE.md` (create it if absent), substituting the real `<repo>`. This is how the lead discovers which agents exist, where their notebooks are, and the `agentType = slice name` spawn convention.
@@ -185,7 +185,12 @@ Two hooks make the harness — not goodwill — protect the notebooks. Setup wri
 > A hard `kill -9` / power loss runs **no** hook — nothing can protect that. The `Stop`/`TeammateIdle` hooks firing every turn are the real safety net: notebooks stay at most one turn stale.
 
 ### Compaction ritual — flush, then compact/kill
-When context fills, **flush before compacting**: every agent writes its durables (STATUS / MEMORY / DECISIONS / KNOWLEDGE), *then* `/compact` runs; the `PreCompact` hook writes `LAST_SNAPSHOT.md` as a backstop. Two-tier truth: the compaction summary is lossy working residue, the notebook is durable truth. After compaction (or a cold start) an agent reads its notebook (STATUS → LAST_SNAPSHOT → MEMORY tail) and resumes.
+Two-tier truth: the compaction summary is lossy working residue; the notebook is durable truth. So **flush before compacting**.
+
+- **Manual (preferred):** run **`/session-compact`** (a slash command this protocol installs — template below). It makes the agent write *all* its durables (STATUS / MEMORY / DECISIONS / KNOWLEDGE) **and trim** them, then it tells you to run `/compact`. Two-step, exactly because a command can't trigger `/compact` itself.
+- **Automatic:** when Claude Code auto-compacts, the LLM gets no turn to write prose — so the `PreCompact` hook (`LAST_SNAPSHOT.md`) is the mechanical backstop, and the per-turn `Stop`/`TeammateIdle` guard means STATUS was already fresh. You lose at most the last turn's prose.
+
+After compaction (or a cold start) an agent reads its notebook (STATUS → LAST_SNAPSHOT → MEMORY tail) and resumes.
 
 ### Restart loop — respawn, never recreate
 ```
@@ -219,15 +224,17 @@ A notebook is a small set of files in `orchestration/agents/_template/`, copied 
 - task: <current task> · state: active|blocked|done · branch: <agent>/<task> · commit: <sha>
 - next: <next intended action>
 ```
-`MEMORY.md` (append-only human learnings; the hook's mechanical state lives separately in the auto-managed `LAST_SNAPSHOT.md`, so MEMORY never bloats):
+`MEMORY.md` (append-only human learnings — **one line each**; keep it lean):
 ```markdown
 # <agent> — MEMORY
 ```
-`DECISIONS.md` (append-only non-obvious choices):
+`DECISIONS.md` (append-only non-obvious choices — **one line each**):
 ```markdown
 # <agent> — DECISIONS
 - <date> chose A over B because X
 ```
+
+> **Anti-bloat.** `STATUS.md`/`KNOWLEDGE.md` are rewritten in place and `LAST_SNAPSHOT.md` is overwritten — all bounded. `MEMORY.md`/`DECISIONS.md` are append-only, so keep entries to one line and let **`/session-compact`** trim them (keep the last ~20 MEMORY lines; fold anything still durable into `KNOWLEDGE.md`, drop the rest). A bloated notebook defeats the purpose — cold-start should read in a few KB.
 
 ### Lead bootstrap template
 `orchestration/LEAD.md`:
@@ -405,6 +412,23 @@ You are the "$name" agent for this repo. Before anything else, read your durable
 orchestration/agents/$name/KNOWLEDGE.md, STATUS.md, MEMORY.md, LAST_SNAPSHOT.md — then continue from
 STATUS. Update STATUS/MEMORY/DECISIONS as you work (a hook enforces a flush before you go idle).
 EOF
+```
+
+### Compaction command (`/session-compact`)
+Setup writes this to `.claude/commands/session-compact.md`. Typing `/session-compact` sends it as a prompt, so the agent flushes + trims its notebook, then asks you to run `/compact` (a command can't trigger `/compact` itself).
+```markdown
+Flush your durable notebook, then we compact. Steps:
+
+1. Find your agent notebook: `orchestration/agents/<your-session-name>/`.
+   If no such folder exists (you're not an orchestration agent), say so and stop.
+2. Write your durables now:
+   - **STATUS.md** — overwrite: current task, state, branch, last commit, next intended action.
+   - **MEMORY.md** — append any non-obvious learning from this session (one line each), THEN trim:
+     keep only the last ~20 entries; fold anything still durable into KNOWLEDGE.md and drop the rest.
+   - **DECISIONS.md** — append non-obvious choices (one line: "chose A over B because X").
+   - **KNOWLEDGE.md** — update only if your understanding of the domain materially changed.
+3. Keep every entry terse; never duplicate what the code or STATUS already says.
+4. Report exactly what you flushed/trimmed, then tell me: "Ready — run /compact."
 ```
 
 ### Project CLAUDE.md registry (lead discovery)
